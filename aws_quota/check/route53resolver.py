@@ -7,10 +7,11 @@ class EndpointCountCheck(QuotaCheck):
     scope = QuotaScope.REGION
     service_code = 'route53resolver'
     quota_code = 'L-4A669CC0'
+    used_services = [service_code]
 
     @property
     def current(self):
-        return len(self.boto_session.client('route53resolver').list_resolver_endpoints()['ResolverEndpoints'])
+        return len(self.get_client(self.service_code).list_resolver_endpoints()['ResolverEndpoints'])
 
 class RulesCountCheck(QuotaCheck):
     key = "route53resolver_rule_count"
@@ -18,10 +19,11 @@ class RulesCountCheck(QuotaCheck):
     scope = QuotaScope.REGION
     service_code = 'route53resolver'
     quota_code = 'L-51D8A1FB'
+    used_services = [service_code]
 
     @property
     def current(self):
-        return len(self.boto_session.client('route53resolver').list_resolver_rules()['ResolverRules'])
+        return len(self.get_client(self.service_code).list_resolver_rules()['ResolverRules'])
 
 class RuleAssociationsCountCheck(QuotaCheck):
     key = "route53resolver_rule_association_count"
@@ -29,7 +31,8 @@ class RuleAssociationsCountCheck(QuotaCheck):
     scope = QuotaScope.REGION
     service_code = 'route53resolver'
     quota_code = 'L-94E19253'
+    used_services = [service_code]
 
     @property
     def current(self):
-        return len(self.boto_session.client('route53resolver').list_resolver_rule_associations()['ResolverRuleAssociations'])
+        return len(self.get_client(self.service_code).list_resolver_rule_associations()['ResolverRuleAssociations'])

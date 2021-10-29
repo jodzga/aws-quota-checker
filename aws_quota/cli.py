@@ -1,5 +1,6 @@
 import logging
 from aws_quota.utils import get_account_id
+import csv
 import enum
 import typing
 import sys
@@ -13,6 +14,7 @@ from aws_quota.check import ALL_CHECKS, ALL_INSTANCE_SCOPED_CHECKS
 CHECKMARK = u'\u2713'
 ALL_CHECKS_CHOICE = click.Choice(['all'] + [chk.key for chk in ALL_CHECKS])
 
+csv_writer = csv.writer(sys.stdout)
 
 def check_keys_to_check_classes(check_string: str):
     split_check_keys = check_string.split(',')
@@ -40,6 +42,7 @@ class Runner:
         SUCCESS = 0
         WARNING = 1
         ERROR = 2
+        FAILED = 3
 
     def __init__(self, session: boto3.Session,
                  checks: typing.List[QuotaCheck],
@@ -53,7 +56,7 @@ class Runner:
         self.error_threshold = error_threshold
         self.fail_on_warning = fail_on_error
 
-    def __report(self, description, scope, current, maximum) -> ReportResult:
+    def __report(self, region, description, quota_code, scope, current, maximum) -> ReportResult:
         if maximum != 0:
             percentage = (current / maximum)
         else:
@@ -72,34 +75,34 @@ class Runner:
             color = 'red'
             result = Runner.ReportResult.ERROR
 
-        click.echo(
-            f'{description} [{scope}]: {current}/{maximum} ', nl=False)
-
-        click.echo(click.style(symbol, fg=color, bold=True))
+        csv_writer.writerow([region, description, quota_code, scope, current, maximum, color])
 
         return result
 
-    def run_checks(self):
+    def run_checks(self, region):
         errors = 0
         warnings = 0
 
         for chk in self.checks:
-            current = chk.current
-            maximum = chk.maximum
+            try:
+                current = chk.current
+                maximum = chk.maximum
 
-            if chk.scope == QuotaScope.ACCOUNT:
-                scope = get_account_id(self.session)
-            elif chk.scope == QuotaScope.REGION:
-                scope = f'{get_account_id(self.session)}/{self.session.region_name}'
-            elif chk.scope == QuotaScope.INSTANCE:
-                scope = f'{get_account_id(self.session)}/{self.session.region_name}/{chk.instance_id}'
+                if chk.scope == QuotaScope.ACCOUNT:
+                    scope = get_account_id(self.session)
+                elif chk.scope == QuotaScope.REGION:
+                    scope = f'{get_account_id(self.session)}/{self.session.region_name}'
+                elif chk.scope == QuotaScope.INSTANCE:
+                    scope = f'{get_account_id(self.session)}/{self.session.region_name}/{chk.instance_id}'
 
-            result = self.__report(chk.description, scope, current, maximum)
+                result = self.__report(region, chk.description, chk.quota_code, scope, current, maximum)
 
-            if result == Runner.ReportResult.WARNING:
-                warnings += 1
-            elif result == Runner.ReportResult.ERROR:
-                errors += 1
+                if result == Runner.ReportResult.WARNING:
+                    warnings += 1
+                elif result == Runner.ReportResult.ERROR:
+                    errors += 1
+            except Exception as e:
+                print(e)
 
         if (self.fail_on_warning and warnings > 0) or errors > 0:
             sys.exit(1)
@@ -153,8 +156,8 @@ def check(check_keys, region, profile, warning_threshold, error_threshold, fail_
 
     session = boto3.Session(region_name=region, profile_name=profile)
 
-    click.echo(
-        f'AWS profile: {session.profile_name} | AWS region: {session.region_name} | Active checks: {",".join([check.key for check in selected_checks])}')
+    # click.echo(
+    #     f'AWS profile: {session.profile_name} | AWS region: {session.region_name} | Active checks: {",".join([check.key for check in selected_checks])}')
 
     checks = []
 
@@ -168,8 +171,10 @@ def check(check_keys, region, profile, warning_threshold, error_threshold, fail_
             else:
                 checks.append(chk(session))
 
+    print("region,description,quota_code,scope,current,maximum,color")
+
     Runner(session, checks, warning_threshold,
-           error_threshold, fail_on_warning).run_checks()
+           error_threshold, fail_on_warning).run_checks(region)
 
 
 @cli.command()
@@ -195,7 +200,7 @@ def check_instance(check_key, instance_id, region, profile, warning_threshold, e
     chk = selected_check(session, instance_id)
 
     Runner(session, [chk], warning_threshold,
-           error_threshold, fail_on_warning).run_checks()
+           error_threshold, fail_on_warning).run_checks(region)
 
 
 @cli.command()

@@ -7,7 +7,9 @@ class SnapshotCountCheck(QuotaCheck):
     scope = QuotaScope.REGION
     service_code = 'ebs'
     quota_code = 'L-309BACF6'
+    used_services = ['ec2']
+
 
     @property
     def current(self):
-        return len(self.boto_session.client('ec2').describe_snapshots(OwnerIds=['self'])['Snapshots'])
+        return len(self.get_client('ec2').describe_snapshots(OwnerIds=['self'])['Snapshots'])

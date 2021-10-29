@@ -6,6 +6,7 @@ class RDSDBInstanceCountCheck(QuotaCheck):
     service_code = "rds"
     scope = QuotaScope.REGION
     quota_code = "L-7B6409FD"
+    used_services = [service_code]
 
     @property
     def current(self) -> int:
@@ -17,6 +18,7 @@ class RDSDBParameterGroupsCountCheck(QuotaCheck):
     service_code = "rds"
     scope = QuotaScope.REGION
     quota_code = "L-DE55804A"
+    used_services = [service_code]
 
     @property
     def current(self) -> int:
@@ -29,6 +31,7 @@ class RDSDBClusterParameterGroupCountCheck(QuotaCheck):
     service_code = "rds"
     scope = QuotaScope.REGION
     quota_code = "L-E4C808A8"
+    used_services = [service_code]
 
     @property
     def current(self) -> int:
@@ -41,6 +44,7 @@ class RDSEventSubscriptions(QuotaCheck):
     service_code = "rds"
     scope = QuotaScope.REGION
     quota_code = "L-A59F4C87"
+    used_services = [service_code]
 
     @property
     def current(self) -> int:

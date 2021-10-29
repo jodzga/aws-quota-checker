@@ -7,7 +7,8 @@ class BucketCountCheck(QuotaCheck):
     scope = QuotaScope.REGION
     service_code = 's3'
     quota_code = 'L-DC2B2D3D'
+    used_services = [service_code]
 
     @property
     def current(self):
-        return len(self.boto_session.client('s3').list_buckets()['Buckets'])
+        return len(self.get_client(self.service_code).list_buckets()['Buckets'])

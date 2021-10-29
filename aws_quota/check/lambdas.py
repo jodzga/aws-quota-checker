@@ -7,11 +7,12 @@ class FunctionAndLayerStorageCheck(QuotaCheck):
     scope = QuotaScope.REGION
     service_code = 'lambda'
     quota_code = 'L-2ACBD22F'
+    used_services = [service_code]
 
     @property
     def current(self):
         return (
-            self.boto_session.client('lambda').get_account_settings()['AccountUsage'][
+            self.get_client(self.service_code).get_account_settings()['AccountUsage'][
                 'TotalCodeSize'
             ]
             / 1000000000

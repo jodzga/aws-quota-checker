@@ -8,7 +8,8 @@ class TopicCountCheck(QuotaCheck):
     scope = QuotaScope.REGION
     service_code = 'ses'
     quota_code = 'L-804C8AE8'
+    used_services = [service_code]
 
     @property
     def current(self):
-        return self.boto_session.client('ses').get_send_quota()['SentLast24Hours']
+        return self.get_client(self.service_code).get_send_quota()['SentLast24Hours']
