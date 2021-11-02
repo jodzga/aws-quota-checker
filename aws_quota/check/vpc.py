@@ -4,7 +4,7 @@ import typing
 
 import boto3
 import botocore.exceptions
-import cachetools
+from aws_quota import threadsafecache
 from .quota_check import QuotaCheck, InstanceQuotaCheck, QuotaScope
 
 
@@ -16,7 +16,7 @@ def check_if_vpc_exists(client, vpc_id: str) -> bool:
     return True
 
 
-@cachetools.cached(cache=cachetools.TTLCache(1, 60))
+@threadsafecache.run_once_cache
 def get_all_vpcs(client) -> typing.List[dict]:
     return client.describe_vpcs()['Vpcs']
 
@@ -28,7 +28,7 @@ def get_vpc_by_id(client, vpc_id: str) -> dict:
         raise KeyError
 
 
-@cachetools.cached(cache=cachetools.TTLCache(1, 60))
+@threadsafecache.run_once_cache
 def get_all_sgs(client) -> typing.List[dict]:
     return client.describe_security_groups()['SecurityGroups']
 
@@ -40,7 +40,7 @@ def get_sg_by_id(client, sg_id: str) -> dict:
         raise KeyError
 
 
-@cachetools.cached(cache=cachetools.TTLCache(1, 60))
+@threadsafecache.run_once_cache
 def get_all_rts(client) -> typing.List[dict]:
     return client.describe_route_tables()['RouteTables']
 
@@ -52,7 +52,7 @@ def get_rt_by_id(client, rt_id: str) -> dict:
         raise KeyError
 
 
-@cachetools.cached(cache=cachetools.TTLCache(1, 60))
+@threadsafecache.run_once_cache
 def get_all_network_acls(client) -> typing.List[dict]:
     return client.describe_network_acls()['NetworkAcls']
 

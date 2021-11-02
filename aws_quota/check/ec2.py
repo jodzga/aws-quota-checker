@@ -1,10 +1,9 @@
 from .quota_check import QuotaCheck, QuotaScope
 
-import boto3
-import cachetools
+from aws_quota import threadsafecache
 
 
-@cachetools.cached(cache=cachetools.TTLCache(1, 60))
+@threadsafecache.run_once_cache
 def get_all_running_ec2_instances(client):
     return [instance for reservations in client.describe_instances(
             Filters=[
@@ -16,7 +15,7 @@ def get_all_running_ec2_instances(client):
             )['Reservations'] for instance in reservations['Instances']]
 
 
-@cachetools.cached(cache=cachetools.TTLCache(1, 60))
+@threadsafecache.run_once_cache
 def get_all_spot_requests(client):
     return client.describe_spot_instance_requests()[
         'SpotInstanceRequests']

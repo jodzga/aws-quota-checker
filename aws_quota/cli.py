@@ -1,5 +1,5 @@
 import logging
-from aws_quota.utils import get_account_id
+from aws_quota.utils import get_account_id, initialize_quotas
 import csv
 import enum
 import typing
@@ -7,14 +7,15 @@ import sys
 import boto3
 import click
 import tabulate
+from concurrent.futures import ThreadPoolExecutor
+import random
+import time
 
 from aws_quota.check.quota_check import InstanceQuotaCheck, QuotaCheck, QuotaScope
 from aws_quota.check import ALL_CHECKS, ALL_INSTANCE_SCOPED_CHECKS
 
 CHECKMARK = u'\u2713'
 ALL_CHECKS_CHOICE = click.Choice(['all'] + [chk.key for chk in ALL_CHECKS])
-
-csv_writer = csv.writer(sys.stdout)
 
 def check_keys_to_check_classes(check_string: str):
     split_check_keys = check_string.split(',')
@@ -48,13 +49,15 @@ class Runner:
                  checks: typing.List[QuotaCheck],
                  warning_threshold: float,
                  error_threshold: float,
-                 fail_on_error: bool) -> None:
+                 fail_on_error: bool,
+                 csv_writer) -> None:
 
         self.session = session
         self.checks = checks
         self.warning_threshold = warning_threshold
         self.error_threshold = error_threshold
         self.fail_on_warning = fail_on_error
+        self.csv_writer = csv_writer
 
     def __report(self, region, description, quota_code, scope, current, maximum) -> ReportResult:
         if maximum != 0:
@@ -63,46 +66,46 @@ class Runner:
             percentage = 0
 
         if percentage <= self.warning_threshold:
-            symbol = CHECKMARK
             color = 'green'
             result = Runner.ReportResult.SUCCESS
         elif self.error_threshold >= percentage > self.warning_threshold:
-            symbol = '!'
             color = 'yellow'
             result = Runner.ReportResult.WARNING
         else:
-            symbol = 'X'
             color = 'red'
             result = Runner.ReportResult.ERROR
 
-        csv_writer.writerow([region, description, quota_code, scope, current, maximum, color])
+        self.csv_writer.writerow([region, description, quota_code, scope, current, maximum, color])
 
         return result
+
+    def run_check(self, chk):
+        current = chk.current
+        maximum = chk.maximum
+
+        if chk.scope == QuotaScope.ACCOUNT:
+            scope = get_account_id(self.session)
+        elif chk.scope == QuotaScope.REGION:
+            scope = f'{get_account_id(self.session)}/{self.session.region_name}'
+        elif chk.scope == QuotaScope.INSTANCE:
+            scope = f'{get_account_id(self.session)}/{self.session.region_name}/{chk.instance_id}'
+
+        return (chk.description, chk.quota_code, scope, current, maximum)
+
 
     def run_checks(self, region):
         errors = 0
         warnings = 0
 
-        for chk in self.checks:
-            try:
-                current = chk.current
-                maximum = chk.maximum
-
-                if chk.scope == QuotaScope.ACCOUNT:
-                    scope = get_account_id(self.session)
-                elif chk.scope == QuotaScope.REGION:
-                    scope = f'{get_account_id(self.session)}/{self.session.region_name}'
-                elif chk.scope == QuotaScope.INSTANCE:
-                    scope = f'{get_account_id(self.session)}/{self.session.region_name}/{chk.instance_id}'
-
-                result = self.__report(region, chk.description, chk.quota_code, scope, current, maximum)
-
-                if result == Runner.ReportResult.WARNING:
-                    warnings += 1
-                elif result == Runner.ReportResult.ERROR:
-                    errors += 1
-            except Exception as e:
-                print(e)
+        with ThreadPoolExecutor(max_workers=128) as executor:
+            futures = [executor.submit(self.run_check, chk) for chk in self.checks]
+            with click.progressbar(futures, label='Running checks quotas', show_pos=True) as futures:
+                for future in futures:
+                    try:
+                        description, quota_code, scope, current, maximum = future.result(60*5)
+                        self.__report(region, description, quota_code, scope, current, maximum)
+                    except Exception as e:
+                        print(f"Check failed ({type(e)}): {e}")
 
         if (self.fail_on_warning and warnings > 0) or errors > 0:
             sys.exit(1)
@@ -161,7 +164,7 @@ def check(check_keys, region, profile, warning_threshold, error_threshold, fail_
 
     checks = []
 
-    with click.progressbar(selected_checks, label='Collecting checks', show_eta=False) as selected_checks:
+    with click.progressbar(selected_checks, label='Collecting checks', show_pos=True) as selected_checks:
         for chk in selected_checks:
             if issubclass(chk, InstanceQuotaCheck):
                 for identifier in chk.get_all_identifiers(session):
@@ -171,10 +174,16 @@ def check(check_keys, region, profile, warning_threshold, error_threshold, fail_
             else:
                 checks.append(chk(session))
 
-    print("region,description,quota_code,scope,current,maximum,color")
+    initialize_quotas(session)
 
-    Runner(session, checks, warning_threshold,
-           error_threshold, fail_on_warning).run_checks(region)
+    # randomize checks to not bottleneck on rate limit of a single API
+    random.shuffle(checks)
+
+    with open(f'results-{region}-{time.strftime("%Y%m%d_%H%M%S")}.csv', 'w') as csvfile:
+        csv_writer = csv.writer(csvfile)
+        csv_writer.writerow(['region','description','quota_code','scope','current','maximum','color'])
+        Runner(session, checks, warning_threshold,
+           error_threshold, fail_on_warning, csv_writer).run_checks(region)
 
 
 @cli.command()
@@ -199,8 +208,10 @@ def check_instance(check_key, instance_id, region, profile, warning_threshold, e
 
     chk = selected_check(session, instance_id)
 
-    Runner(session, [chk], warning_threshold,
-           error_threshold, fail_on_warning).run_checks(region)
+    with open(f'results-{region}-{time.strftime("%Y%m%d_%H%M%S")}.csv', 'w') as csvfile:
+        csv_writer = csv.writer(csvfile)
+        Runner(session, [chk], warning_threshold,
+            error_threshold, fail_on_warning, csv_writer).run_checks(region)
 
 
 @cli.command()

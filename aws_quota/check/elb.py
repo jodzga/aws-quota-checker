@@ -3,24 +3,44 @@ from aws_quota.exceptions import InstanceWithIdentifierNotFound
 import typing
 import boto3
 from .quota_check import QuotaCheck, InstanceQuotaCheck, QuotaScope
+from aws_quota import threadsafecache
+
+
+
+@threadsafecache.run_once_cache
+def lbs(client, lb_type):
+    paginator = client.get_paginator('describe_load_balancers')
+    return list(
+        filter(
+            lambda lb: lb['Type'] == lb_type,
+            (chunk for page in paginator.paginate(PaginationConfig={'PageSize': 100}) for chunk in page['LoadBalancers'])
+        )
+    )
 
 
 def get_albs(client):
-    return list(
-        filter(
-            lambda lb: lb['Type'] == 'application',
-            client.describe_load_balancers()['LoadBalancers'],
-        )
-    )
+    return lbs(client, 'application')
 
 
 def get_nlbs(client):
-    return list(
-        filter(
-            lambda lb: lb['Type'] == 'network',
-            client.describe_load_balancers()['LoadBalancers'],
-        )
-    )
+    return lbs(client, 'network')
+
+
+@threadsafecache.run_once_cache
+def get_target_groups(client, lb_arn):
+    paginator = client.get_paginator('describe_target_groups')
+    return list((chunk for page in paginator.paginate(LoadBalancerArn=lb_arn, PaginationConfig={'PageSize': 100}) for chunk in page['TargetGroups']))
+
+
+@threadsafecache.run_once_cache
+def get_target_count_per_target_group(client, tg_arn):
+    return len(client.describe_target_health(TargetGroupArn=tg_arn)['TargetHealthDescriptions'])
+
+
+@threadsafecache.run_once_cache
+def get_all_target_groups(client):
+    paginator = client.get_paginator('describe_target_groups')
+    return list((chunk for page in paginator.paginate(PaginationConfig={'PageSize': 100}) for chunk in page['TargetGroups']))
 
 
 class ClassicLoadBalancerCountCheck(QuotaCheck):
@@ -109,6 +129,49 @@ class ListenerPerNetworkLoadBalancerCountCheck(InstanceQuotaCheck):
             raise InstanceWithIdentifierNotFound(self) from e
 
 
+class TargetsPerNetworkLoadBalancerCountCheck(InstanceQuotaCheck):
+    key = "elb_targets_per_nlb"
+    description = "Targets per Network Load Balancer"
+    service_code = 'elasticloadbalancing'
+    quota_code = 'L-EEF1AD04'
+    instance_id = 'Load Balancer ARN'
+    used_services = ['elbv2']
+
+    @staticmethod
+    def get_all_identifiers(session: boto3.Session) -> typing.List[str]:
+        return [alb['LoadBalancerArn'] for alb in get_nlbs(get_client(session, 'elbv2'))]
+
+    @property
+    def current(self):
+        try:
+            count = 0
+            for target_group in get_target_groups(self.get_client('elbv2'), self.instance_id):
+                count += get_target_count_per_target_group(self.get_client('elbv2'), target_group['TargetGroupArn'])
+            return count
+        except self.get_client('elbv2').exceptions.LoadBalancerNotFoundException as e:
+            raise InstanceWithIdentifierNotFound(self) from e
+
+
+class TargetsPerTargetGroupPerRegionCountCheck(InstanceQuotaCheck):
+    key = "elb_targets_per_target_group_per_region"
+    description = "Targets per Target Group per Region"
+    service_code = 'elasticloadbalancing'
+    quota_code = 'L-A0D0B863'
+    instance_id = 'Target Group ARN'
+    used_services = ['elbv2']
+
+    @staticmethod
+    def get_all_identifiers(session: boto3.Session) -> typing.List[str]:
+        return [tg['TargetGroupArn'] for tg in get_all_target_groups(get_client(session, 'elbv2'))]
+
+    @property
+    def current(self):
+        try:
+            return get_target_count_per_target_group(self.get_client('elbv2'), self.instance_id)
+        except self.get_client('elbv2').exceptions.LoadBalancerNotFoundException as e:
+            raise InstanceWithIdentifierNotFound(self) from e
+
+
 class ApplicationLoadBalancerCountCheck(QuotaCheck):
     key = "elb_alb_count"
     description = "Application Load Balancers per region"
@@ -156,7 +219,7 @@ class TargetGroupCountCheck(QuotaCheck):
 
     @property
     def current(self):
-        return len(self.get_client('elbv2').describe_target_groups()['TargetGroups'])
+        return len(get_all_target_groups(self.get_client('elbv2')))
 
 
 class TargetGroupsPerApplicationLoadBalancerCountCheck(InstanceQuotaCheck):
@@ -174,10 +237,6 @@ class TargetGroupsPerApplicationLoadBalancerCountCheck(InstanceQuotaCheck):
     @property
     def current(self) -> int:
         try:
-            return len(
-                self.get_client('elbv2').describe_target_groups(
-                    LoadBalancerArn=self.instance_id
-                )['TargetGroups']
-            )
+            return len(get_target_groups(self.get_client('elbv2'), self.instance_id))
         except self.get_client('elbv2').exceptions.LoadBalancerNotFoundException as e:
             raise InstanceWithIdentifierNotFound(self) from e

@@ -1,4 +1,4 @@
-from aws_quota.utils import get_account_id, get_client as util_get_client
+from aws_quota.utils import get_account_id, get_quota, get_client as util_get_client
 import enum
 import typing
 
@@ -23,7 +23,7 @@ class QuotaCheck:
         super().__init__()
 
         self.boto_session = boto_session
-        self.initialize_clients(['service-quotas'] + self.used_services)
+        self.initialize_clients(['service-quotas', 'sts'] + self.used_services)
 
     def get_client(self, service):
         return util_get_client(self.boto_session, service)
@@ -55,10 +55,7 @@ class QuotaCheck:
 
     @property
     def maximum(self) -> int:
-        try:
-            return int(self.get_client('service-quotas').get_service_quota(ServiceCode=self.service_code, QuotaCode=self.quota_code)['Quota']['Value'])
-        except self.get_client('service-quotas').exceptions.NoSuchResourceException:
-            return int(self.get_client('service-quotas').get_aws_default_service_quota(ServiceCode=self.service_code, QuotaCode=self.quota_code)['Quota']['Value'])
+        return int(get_quota(self.service_code, self.quota_code))
 
     @property
     def current(self) -> int:
