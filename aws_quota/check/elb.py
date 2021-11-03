@@ -33,6 +33,18 @@ def get_target_groups(client, lb_arn):
 
 
 @threadsafecache.run_once_cache
+def get_listeners(client, lb_arn):
+    paginator = client.get_paginator('describe_listeners')
+    return list((chunk for page in paginator.paginate(LoadBalancerArn=lb_arn, PaginationConfig={'PageSize': 100}) for chunk in page['Listeners']))
+
+
+@threadsafecache.run_once_cache
+def get_rules(client, listener_arn):
+    paginator = client.get_paginator('describe_rules')
+    return list((chunk for page in paginator.paginate(ListenerArn=listener_arn, PaginationConfig={'PageSize': 100}) for chunk in page['Rules']))
+
+
+@threadsafecache.run_once_cache
 def get_target_count_per_target_group(client, tg_arn):
     return len(client.describe_target_health(TargetGroupArn=tg_arn)['TargetHealthDescriptions'])
 
@@ -240,3 +252,55 @@ class TargetGroupsPerApplicationLoadBalancerCountCheck(InstanceQuotaCheck):
             return len(get_target_groups(self.get_client('elbv2'), self.instance_id))
         except self.get_client('elbv2').exceptions.LoadBalancerNotFoundException as e:
             raise InstanceWithIdentifierNotFound(self) from e
+
+
+class TargetGroupsPerActionPerNetworkLoadBalancerCountCheck(InstanceQuotaCheck):
+    key = "elb_target_groups_per_action_per_nlb"
+    description = "Target Groups per Action per Network Load Balancer"
+    service_code = 'elasticloadbalancing'
+    quota_code = 'L-AFDDADBF'
+    instance_id = '(Load Balancer ARN, Listener ARN, Rule ARN)'
+    used_services = ['elbv2']
+
+    @staticmethod
+    def get_all_identifiers(session: boto3.Session) -> typing.List[str]:
+        indentifiers = []
+        for nlb in get_nlbs(get_client(session, 'elbv2')):
+            for listener in get_listeners(get_client(session, 'elbv2'), nlb['LoadBalancerArn']):
+                indentifiers.append((nlb['LoadBalancerArn'], listener['ListenerArn'], None))
+                indentifiers += [(nlb['LoadBalancerArn'], listener['ListenerArn'], rule['RuleArn']) for rule in get_rules(get_client(session, 'elbv2'), listener['ListenerArn'])]
+        return indentifiers
+
+    @property
+    def current(self) -> int:
+        count = 0
+        nlb_anr, listener_anr, rule_anr = self.instance_id
+        if rule_anr is None:
+            listener = next((x for x in get_listeners(self.get_client('elbv2'), nlb_anr) if x['ListenerArn'] == listener_anr), None)
+            if listener is None:
+                raise InstanceWithIdentifierNotFound(self)
+            for action in listener['DefaultActions']:
+                processed_target_groups = set()
+                if 'TargetGroupArn' in action and action['TargetGroupArn'] is not None:
+                    count += 1
+                    processed_target_groups.add(action['TargetGroupArn'])
+                if 'ForwardConfig' in action:
+                    for target_group in action['ForwardConfig']['TargetGroups']:
+                        if target_group['TargetGroupArn'] not in processed_target_groups:
+                            count += 1
+                            processed_target_groups.add(target_group['TargetGroupArn'])
+        else:
+            rule = next((x for x in get_rules(self.get_client('elbv2'), listener_anr) if x['RuleArn'] == rule_anr), None)
+            if rule is None:
+                raise InstanceWithIdentifierNotFound(self)
+            for action in rule['Actions']:
+                processed_target_groups = set()
+                if 'TargetGroupArn' in action and action['TargetGroupArn'] is not None:
+                    count += 1
+                    processed_target_groups.add(action['TargetGroupArn'])
+                if 'ForwardConfig' in action:
+                    for target_group in action['ForwardConfig']['TargetGroups']:
+                        if target_group['TargetGroupArn'] not in processed_target_groups:
+                            count += 1
+                            processed_target_groups.add(target_group['TargetGroupArn'])
+        return count
