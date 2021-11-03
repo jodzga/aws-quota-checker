@@ -318,15 +318,12 @@ class VpcPeeringConnectionPerVpcCheck(InstanceQuotaCheck):
 
     @property
     def current(self) -> int:
-        try:
-            # Count unique VpcPeeringConnection if either requester or accepter VPC id matches.
-            result = set()
-            vpc_peerings = get_vpc_peering_connections(self.get_client('ec2'))
-            for vpc_peering in vpc_peerings:
-                if vpc_peering['Status']['Code'] == 'active' and (
-                        vpc_peering['AccepterVpcInfo']['VpcId'] == self.instance_id or
-                        vpc_peering['RequesterVpcInfo']['VpcId'] == self.instance_id):
-                    result.add(vpc_peering['VpcPeeringConnectionId'])
-            return len(result)
-        except Exception:
-            print("Error in VpcPeeringConnectionPerVpcCheck")
+        # Count unique VpcPeeringConnection if either requester or accepter VPC id matches.
+        result = set()
+        vpc_peerings = get_vpc_peering_connections(self.get_client('ec2'))
+        for vpc_peering in vpc_peerings:
+            if vpc_peering['Status']['Code'] == 'active' and (
+                    vpc_peering['AccepterVpcInfo']['VpcId'] == self.instance_id or
+                    vpc_peering['RequesterVpcInfo']['VpcId'] == self.instance_id):
+                result.add(vpc_peering['VpcPeeringConnectionId'])
+        return len(result)
