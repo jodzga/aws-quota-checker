@@ -57,6 +57,12 @@ def get_all_network_acls(client) -> typing.List[dict]:
     return client.describe_network_acls()['NetworkAcls']
 
 
+@threadsafecache.run_once_cache
+def get_vpc_peering_connections(client) -> typing.List[dict]:
+    paginator = client.get_paginator('describe_vpc_peering_connections')
+    return list((chunk for page in paginator.paginate(PaginationConfig={'PageSize': 100}) for chunk in page['VpcPeeringConnections']))
+
+
 class VpcCountCheck(QuotaCheck):
     key = "vpc_count"
     description = "VPCs per region"
@@ -295,3 +301,32 @@ class Ipv6CidrBlocksPerVpcCheck(InstanceQuotaCheck):
             return len(list(filter(lambda cbas: cbas['Ipv6CidrBlockState']['State'] == 'associated', vpc['Ipv6CidrBlockAssociationSet'])))
         except KeyError:
             raise InstanceWithIdentifierNotFound(self)
+
+
+class VpcPeeringConnectionPerVpcCheck(InstanceQuotaCheck):
+    key = "vpc_peering_connection_per_vpc"
+    description = "Active VPC peering connections per VPC"
+    scope = QuotaScope.INSTANCE
+    service_code = 'vpc'
+    quota_code = 'L-7E9ECCDB'
+    instance_id = 'VPC ID'
+    used_services = ['ec2']
+
+    @staticmethod
+    def get_all_identifiers(session: boto3.Session) -> typing.List[str]:
+        return [vpc['VpcId'] for vpc in get_all_vpcs(get_client(session, 'ec2'))]
+
+    @property
+    def current(self) -> int:
+        try:
+            # Count unique VpcPeeringConnection if either requester or accepter VPC id matches.
+            result = set()
+            vpc_peerings = get_vpc_peering_connections(self.get_client('ec2'))
+            for vpc_peering in vpc_peerings:
+                if vpc_peering['Status']['Code'] == 'active' and (
+                        vpc_peering['AccepterVpcInfo']['VpcId'] == self.instance_id or
+                        vpc_peering['RequesterVpcInfo']['VpcId'] == self.instance_id):
+                    result.add(vpc_peering['VpcPeeringConnectionId'])
+            return len(result)
+        except Exception:
+            print("Error in VpcPeeringConnectionPerVpcCheck")
