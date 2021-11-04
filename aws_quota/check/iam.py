@@ -184,7 +184,7 @@ class ManagedPolicyLengthCheck(InstanceQuotaCheck):
         # is missing for IAM. The us-east-1 is the "main" region in some sense.
         if session.region_name == 'us-east-1':
             paginator = get_client(session, 'iam').get_paginator('list_policies')
-            policies = list((chunk for page in paginator.paginate(Scope='All', PaginationConfig={'PageSize': 100}) for chunk in page['Policies']))
+            policies = list((chunk for page in paginator.paginate(Scope='Local', PaginationConfig={'PageSize': 100}) for chunk in page['Policies']))
             return [(p['Arn'], p['DefaultVersionId']) for p in policies]
         else:
             return []
