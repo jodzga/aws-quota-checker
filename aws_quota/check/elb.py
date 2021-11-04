@@ -45,8 +45,12 @@ def get_rules(client, listener_arn):
 
 
 @threadsafecache.run_once_cache
+def get_target_health(client, tg_arn):
+    return client.describe_target_health(TargetGroupArn=tg_arn)['TargetHealthDescriptions']
+
+
 def get_target_count_per_target_group(client, tg_arn):
-    return len(client.describe_target_health(TargetGroupArn=tg_arn)['TargetHealthDescriptions'])
+    return len(get_target_health(client, tg_arn))
 
 
 @threadsafecache.run_once_cache
@@ -160,6 +164,48 @@ class TargetsPerNetworkLoadBalancerCountCheck(InstanceQuotaCheck):
             for target_group in get_target_groups(self.get_client('elbv2'), self.instance_id):
                 count += get_target_count_per_target_group(self.get_client('elbv2'), target_group['TargetGroupArn'])
             return count
+        except self.get_client('elbv2').exceptions.LoadBalancerNotFoundException as e:
+            raise InstanceWithIdentifierNotFound(self) from e
+
+
+# The Availability Zone in this check can be interpreted in two ways:
+# a) When we register a Target with load balancer we provide an Availability Zone which determines whether the target
+#    receives traffic from the load balancer nodes in the specified Availability Zone or from all enabled Availability Zones
+#    for the load balancer (see https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/elbv2.html#ElasticLoadBalancingv2.Client.register_targets).
+# b) An Availability Zone where the target is located.
+# We implement a) here and wait for clarification from AWS.
+class TargetsPerAZPerNetworkLoadBalancerCountCheck(InstanceQuotaCheck):
+    key = "elb_targets_per_az_per_nlb"
+    description = "Targets per Availability Zone per Network Load Balancer"
+    service_code = 'elasticloadbalancing'
+    quota_code = 'L-B211E961'
+    instance_id = 'Load Balancer ARN'
+    used_services = ['elbv2']
+
+    @staticmethod
+    def get_all_identifiers(session: boto3.Session) -> typing.List[str]:
+        return [alb['LoadBalancerArn'] for alb in get_nlbs(get_client(session, 'elbv2'))]
+
+    @property
+    def current(self):
+        try:
+            counts = {}
+            all = 0
+            for target_group in get_target_groups(self.get_client('elbv2'), self.instance_id):
+                for tg_health in get_target_health(self.get_client('elbv2'), target_group['TargetGroupArn']):
+                    tg = tg_health['Target']
+                    if 'AvailabilityZone' not in tg or tg['AvailabilityZone'] == 'all':
+                        all += 1
+                    else:
+                        if tg['AvailabilityZone'] not in counts:
+                            counts[tg['AvailabilityZone']] = 0
+                        tg['AvailabilityZone'] += 1
+            if not counts:
+                return all
+            else:
+                for az in counts:
+                    counts[az] += all
+                return max(counts.values)
         except self.get_client('elbv2').exceptions.LoadBalancerNotFoundException as e:
             raise InstanceWithIdentifierNotFound(self) from e
 
