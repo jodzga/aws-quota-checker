@@ -18,6 +18,7 @@ class QuotaCheck:
     service_code: str = None
     quota_code: str = None
     used_services = []
+    concurrency = 64
 
     def __init__(self, boto_session: boto3.Session) -> None:
         super().__init__()

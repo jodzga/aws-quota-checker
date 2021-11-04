@@ -10,15 +10,16 @@ from .quota_check import QuotaCheck, InstanceQuotaCheck, QuotaScope
 
 def check_if_vpc_exists(client, vpc_id: str) -> bool:
     try:
-        client.describe_vpcs(VpcIds=[vpc_id])
-    except botocore.exceptions.ClientError as e:
+        next(filter(lambda vpc: vpc_id == vpc['VpcId'], get_all_vpcs(client)))
+        return True
+    except StopIteration:
         return False
-    return True
 
 
 @threadsafecache.run_once_cache
 def get_all_vpcs(client) -> typing.List[dict]:
-    return client.describe_vpcs()['Vpcs']
+    paginator = client.get_paginator('describe_vpcs')
+    return list((chunk for page in paginator.paginate(PaginationConfig={'PageSize': 100}) for chunk in page['Vpcs']))
 
 
 def get_vpc_by_id(client, vpc_id: str) -> dict:
@@ -30,7 +31,8 @@ def get_vpc_by_id(client, vpc_id: str) -> dict:
 
 @threadsafecache.run_once_cache
 def get_all_sgs(client) -> typing.List[dict]:
-    return client.describe_security_groups()['SecurityGroups']
+    paginator = client.get_paginator('describe_security_groups')
+    return list((chunk for page in paginator.paginate(PaginationConfig={'PageSize': 100}) for chunk in page['SecurityGroups']))
 
 
 def get_sg_by_id(client, sg_id: str) -> dict:
@@ -42,7 +44,8 @@ def get_sg_by_id(client, sg_id: str) -> dict:
 
 @threadsafecache.run_once_cache
 def get_all_rts(client) -> typing.List[dict]:
-    return client.describe_route_tables()['RouteTables']
+    paginator = client.get_paginator('describe_route_tables')
+    return list((chunk for page in paginator.paginate(PaginationConfig={'PageSize': 100}) for chunk in page['RouteTables']))
 
 
 def get_rt_by_id(client, rt_id: str) -> dict:
@@ -54,7 +57,8 @@ def get_rt_by_id(client, rt_id: str) -> dict:
 
 @threadsafecache.run_once_cache
 def get_all_network_acls(client) -> typing.List[dict]:
-    return client.describe_network_acls()['NetworkAcls']
+    paginator = client.get_paginator('describe_network_acls')
+    return list((chunk for page in paginator.paginate(PaginationConfig={'PageSize': 100}) for chunk in page['NetworkAcls']))
 
 
 @threadsafecache.run_once_cache
@@ -86,7 +90,8 @@ class InternetGatewayCountCheck(QuotaCheck):
 
     @property
     def current(self):
-        return len(self.boto_session.client('ec2').describe_internet_gateways()['InternetGateways'])
+        paginator = self.get_client('ec2').get_paginator('describe_internet_gateways')
+        return len(list((chunk for page in paginator.paginate(PaginationConfig={'PageSize': 100}) for chunk in page['InternetGateways'])))
 
 
 class NetworkInterfaceCountCheck(QuotaCheck):
@@ -99,7 +104,8 @@ class NetworkInterfaceCountCheck(QuotaCheck):
 
     @property
     def current(self):
-        return len(self.boto_session.client('ec2').describe_network_interfaces()['NetworkInterfaces'])
+        paginator = self.get_client('ec2').get_paginator('describe_network_interfaces')
+        return len(list((chunk for page in paginator.paginate(PaginationConfig={'PageSize': 100}) for chunk in page['NetworkInterfaces'])))
 
 
 class SecurityGroupCountCheck(QuotaCheck):
@@ -112,7 +118,7 @@ class SecurityGroupCountCheck(QuotaCheck):
 
     @property
     def current(self):
-        return len(self.boto_session.client('ec2').describe_security_groups()['SecurityGroups'])
+        return len(get_all_sgs(self.get_client('ec2')))
 
 
 class RulesPerSecurityGroupCheck(InstanceQuotaCheck):
@@ -153,11 +159,7 @@ class RouteTablesPerVpcCheck(InstanceQuotaCheck):
     @property
     def current(self):
         if check_if_vpc_exists(self.get_client('ec2'), self.instance_id):
-            return len(self.get_client('ec2').describe_route_tables(Filters=[
-                {
-                    'Name': 'vpc-id',
-                    'Values': [self.instance_id]
-                }])['RouteTables'])
+            return len(list(filter(lambda rt: self.instance_id == rt['VpcId'], get_all_rts(self.get_client('ec2')))))
         else:
             raise InstanceWithIdentifierNotFound(self)
 
@@ -200,11 +202,12 @@ class SubnetsPerVpcCheck(InstanceQuotaCheck):
     @property
     def current(self):
         if check_if_vpc_exists(self.get_client('ec2'), self.instance_id):
-            return len(self.get_client('ec2').describe_subnets(Filters=[
+            paginator = self.get_client('ec2').get_paginator('describe_subnets')
+            return len(list((chunk for page in paginator.paginate(Filters=[
                 {
                     'Name': 'vpc-id',
                     'Values': [self.instance_id]
-                }])['Subnets'])
+                }], PaginationConfig={'PageSize': 100}) for chunk in page['Subnets'])))
         else:
             raise InstanceWithIdentifierNotFound(self)
 
@@ -225,11 +228,7 @@ class AclsPerVpcCheck(InstanceQuotaCheck):
     @property
     def current(self) -> int:
         if check_if_vpc_exists(self.get_client('ec2'), self.instance_id):
-            return len(self.get_client('ec2').describe_network_acls(Filters=[
-                {
-                    'Name': 'vpc-id',
-                    'Values': [self.instance_id]
-                }])['NetworkAcls'])
+            return len(list(filter(lambda nacl: self.instance_id == nacl['VpcId'], get_all_network_acls(self.get_client('ec2')))))
         else:
             raise InstanceWithIdentifierNotFound(self)
 
