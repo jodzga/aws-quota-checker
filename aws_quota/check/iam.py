@@ -114,6 +114,9 @@ class AttachedPolicyPerUserCheck(InstanceQuotaCheck):
 
     @staticmethod
     def get_all_identifiers(session: boto3.Session) -> typing.List[str]:
+        # The IAM is a global service. It can be accessed from any region and in any region the results are exactly the same.
+        # However, only in us-east-1 the Service Quota returns the limit value for IAM. In all other regions the quota value
+        # is missing for IAM. The us-east-1 is the "main" region in some sense.
         if session.region_name == 'us-east-1':
             return [user['UserName'] for user in get_users(get_client(session, 'iam'))]
         else:
@@ -144,6 +147,9 @@ class GroupsPerUserCheck(InstanceQuotaCheck):
 
     @staticmethod
     def get_all_identifiers(session: boto3.Session) -> typing.List[str]:
+        # The IAM is a global service. It can be accessed from any region and in any region the results are exactly the same.
+        # However, only in us-east-1 the Service Quota returns the limit value for IAM. In all other regions the quota value
+        # is missing for IAM. The us-east-1 is the "main" region in some sense.
         if session.region_name == 'us-east-1':
             return [user['UserName'] for user in get_users(get_client(session, 'iam'))]
         else:
@@ -173,7 +179,9 @@ class ManagedPolicyLengthCheck(InstanceQuotaCheck):
 
     @staticmethod
     def get_all_identifiers(session: boto3.Session) -> typing.List[str]:
-        # Managed policies are global but quota is available only in us-east-1
+        # The IAM is a global service. It can be accessed from any region and in any region the results are exactly the same.
+        # However, only in us-east-1 the Service Quota returns the limit value for IAM. In all other regions the quota value
+        # is missing for IAM. The us-east-1 is the "main" region in some sense.
         if session.region_name == 'us-east-1':
             paginator = get_client(session, 'iam').get_paginator('list_policies')
             policies = list((chunk for page in paginator.paginate(Scope='All', PaginationConfig={'PageSize': 100}) for chunk in page['Policies']))
@@ -205,6 +213,9 @@ class AccessKeysPerUserCheck(InstanceQuotaCheck):
 
     @staticmethod
     def get_all_identifiers(session: boto3.Session) -> typing.List[str]:
+        # The IAM is a global service. It can be accessed from any region and in any region the results are exactly the same.
+        # However, only in us-east-1 the Service Quota returns the limit value for IAM. In all other regions the quota value
+        # is missing for IAM. The us-east-1 is the "main" region in some sense.
         if session.region_name == 'us-east-1':
             return [user['UserName'] for user in get_users(get_client(session, 'iam'))]
         else:
@@ -234,6 +245,9 @@ class AttachedPolicyPerGroupCheck(InstanceQuotaCheck):
 
     @staticmethod
     def get_all_identifiers(session: boto3.Session) -> typing.List[str]:
+        # The IAM is a global service. It can be accessed from any region and in any region the results are exactly the same.
+        # However, only in us-east-1 the Service Quota returns the limit value for IAM. In all other regions the quota value
+        # is missing for IAM. The us-east-1 is the "main" region in some sense.
         if session.region_name == 'us-east-1':
             return [user['GroupName'] for user in session.client('iam').list_groups()['Groups']]
         else:
@@ -260,6 +274,9 @@ class AttachedPolicyPerRoleCheck(InstanceQuotaCheck):
 
     @staticmethod
     def get_all_identifiers(session: boto3.Session) -> typing.List[str]:
+        # The IAM is a global service. It can be accessed from any region and in any region the results are exactly the same.
+        # However, only in us-east-1 the Service Quota returns the limit value for IAM. In all other regions the quota value
+        # is missing for IAM. The us-east-1 is the "main" region in some sense.
         if session.region_name == 'us-east-1':
             return [user['RoleName'] for user in session.client('iam').list_roles()['Roles']]
         else:

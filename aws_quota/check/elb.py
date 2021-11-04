@@ -199,7 +199,7 @@ class TargetsPerAZPerNetworkLoadBalancerCountCheck(InstanceQuotaCheck):
                     else:
                         if tg['AvailabilityZone'] not in counts:
                             counts[tg['AvailabilityZone']] = 0
-                        tg['AvailabilityZone'] += 1
+                        counts[tg['AvailabilityZone']] += 1
             if not counts:
                 return all
             else:
