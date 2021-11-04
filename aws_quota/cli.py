@@ -3,14 +3,13 @@ from aws_quota.utils import get_account_id, initialize_quotas
 import csv
 import enum
 import typing
-import sys
 import boto3
 import click
 import tabulate
 from concurrent.futures import ThreadPoolExecutor
 import random
 import time
-
+from collections import deque
 from aws_quota.check.quota_check import InstanceQuotaCheck, QuotaCheck, QuotaScope
 from aws_quota.check import ALL_CHECKS, ALL_INSTANCE_SCOPED_CHECKS
 
@@ -94,22 +93,60 @@ class Runner:
 
 
     def run_checks(self, region):
-        errors = 0
-        warnings = 0
 
         with ThreadPoolExecutor(max_workers=128) as executor:
-            futures = [executor.submit(self.run_check, chk) for chk in self.checks]
-            with click.progressbar(futures, label='Running checks quotas', show_pos=True) as futures:
-                for future in futures:
-                    try:
-                        description, quota_code, scope, current, maximum = future.result(60*5)
-                        self.__report(region, description, quota_code, scope, current, maximum)
-                    except Exception as e:
-                        print(f"Check failed ({type(e)}): {e}")
+            futures = deque()
+            running_checks = {}
+            future_to_quota_code = {}
+            progress_update = 0
+            remaining_checks = deque(self.checks.copy())
 
-        if (self.fail_on_warning and warnings > 0) or errors > 0:
-            sys.exit(1)
+            with click.progressbar(length=len(remaining_checks), label='Running quota checks', show_pos=True) as bar:
+                
+                progress_updater_counter = len(remaining_checks)
+                
+                while len(remaining_checks) > 0 or len(futures) > 0:
 
+                    for _ in range(len(futures)):
+                        future = futures.popleft()
+                        if future.done():
+                            progress_update += 1
+                            running_checks[future_to_quota_code[future]] -= 1
+                            try:
+                                description, quota_code, scope, current, maximum = future.result()
+                                self.__report(region, description, quota_code, scope, current, maximum)
+                            except Exception as e:
+                                print(f"Check {future_to_quota_code[future]} failed ({type(e)}): {e}")
+                        else:
+                            futures.append(future)
+
+
+                    if len(remaining_checks) > 0:
+                        check = remaining_checks.popleft()
+                        
+                        if check.quota_code not in running_checks:
+                            running_checks[check.quota_code] = 0
+                        
+                        if running_checks[check.quota_code] <= check.concurrency:
+                            future = executor.submit(self.run_check, check)
+                            future_to_quota_code[future] = check.quota_code
+                            futures.append(future)
+                            running_checks[check.quota_code] += 1
+                        else:
+                            remaining_checks.append(check)
+                        
+                        progress_updater_counter -= 1
+                        if progress_updater_counter <= 0:
+                            progress_updater_counter = len(remaining_checks)
+                            if progress_update > 0:
+                                bar.update(progress_update)
+                                progress_update = 0
+                            time.sleep(0.1)
+                    else:
+                        if progress_update > 0:
+                            bar.update(progress_update)
+                            progress_update = 0
+                        time.sleep(0.1)
 
 @click.group()
 def cli():
