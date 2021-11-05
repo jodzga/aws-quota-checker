@@ -67,6 +67,12 @@ def get_vpc_peering_connections(client) -> typing.List[dict]:
     return list((chunk for page in paginator.paginate(PaginationConfig={'PageSize': 100}) for chunk in page['VpcPeeringConnections']))
 
 
+@threadsafecache.run_once_cache
+def get_vpc_endpoints(client) -> typing.List[dict]:
+    paginator = client.get_paginator('describe_vpc_endpoints')
+    return list((chunk for page in paginator.paginate(PaginationConfig={'PageSize': 100}) for chunk in page['VpcEndpoints']))
+
+
 class VpcCountCheck(QuotaCheck):
     key = "vpc_count"
     description = "VPCs per region"
@@ -326,3 +332,57 @@ class VpcPeeringConnectionPerVpcCheck(InstanceQuotaCheck):
                     vpc_peering['RequesterVpcInfo']['VpcId'] == self.instance_id):
                 result.add(vpc_peering['VpcPeeringConnectionId'])
         return len(result)
+
+
+# I'm not sure what's the scope of this check, so I'll just use ACCOUNT level scope which is the most rigorous.
+# This should be a fairly less frequent operation so I'd expect it to be 0 for most of the time.
+class OutstandingVpcPeeringConnectionRequests(QuotaCheck):
+    key = "vpc_outstanding_vpc_peering_connection_requests"
+    description = "Outstanding VPC peering connection requests"
+    scope = QuotaScope.ACCOUNT
+    service_code = 'vpc'
+    quota_code = 'L-DC9F7029'
+    used_services = ['ec2']
+
+    @property
+    def current(self) -> int:
+        # Count unique VpcPeeringConnection if Status Code is 'initiating-request' or 'pending-acceptance'.
+        result = set()
+        vpc_peerings = get_vpc_peering_connections(self.get_client('ec2'))
+        for vpc_peering in vpc_peerings:
+            if vpc_peering['Status']['Code'] in ('initiating-request', 'pending-acceptance'):
+                result.add(vpc_peering['VpcPeeringConnectionId'])
+        return len(result)
+
+
+class GatewayVpcEndpointsPerRegion(QuotaCheck):
+    key = "vpc_gateway_vpc_endpoints_per_region"
+    description = "Gateway VPC endpoints per Region"
+    scope = QuotaScope.REGION
+    service_code = 'vpc'
+    quota_code = 'L-1B52E74A'
+    used_services = ['ec2']
+
+    @property
+    def current(self) -> int:
+        return len(list(filter(lambda vpc_endpoint: vpc_endpoint['VpcEndpointType'] == 'Gateway',
+                               get_vpc_endpoints(self.get_client('ec2')))))
+
+
+class InterfaceVpcEndpointsPerVpc(InstanceQuotaCheck):
+    key = "vpc_interface_vpc_endpoints_per_vpc"
+    description = "Interface VPC endpoints per VPC"
+    scope = QuotaScope.INSTANCE
+    service_code = 'vpc'
+    quota_code = 'L-29B6F2EB'
+    instance_id = 'VPC ID'
+    used_services = ['ec2']
+
+    @staticmethod
+    def get_all_identifiers(session: boto3.Session) -> typing.List[str]:
+        return [vpc['VpcId'] for vpc in get_all_vpcs(get_client(session, 'ec2'))]
+
+    @property
+    def current(self) -> int:
+        return len(list(filter(lambda vpc_endpoint: vpc_endpoint['VpcEndpointType'] == 'Gateway' and vpc_endpoint['VpcId'] == self.instance_id,
+                               get_vpc_endpoints(self.get_client('ec2')))))
