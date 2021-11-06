@@ -61,6 +61,19 @@ def get_all_network_acls(client) -> typing.List[dict]:
     return list((chunk for page in paginator.paginate(PaginationConfig={'PageSize': 100}) for chunk in page['NetworkAcls']))
 
 
+def get_subnet_by_arn(client, subnet_arn: str) -> dict:
+    try:
+        return next(filter(lambda subnet: subnet_arn == subnet['SubnetArn'], get_all_subnets(client)))
+    except StopIteration:
+        raise KeyError
+
+
+@threadsafecache.run_once_cache
+def get_all_subnets(client) -> typing.List[dict]:
+    paginator = client.get_paginator('describe_subnets')
+    return list((chunk for page in paginator.paginate(PaginationConfig={'PageSize': 100}) for chunk in page['Subnets']))
+
+
 @threadsafecache.run_once_cache
 def get_vpc_peering_connections(client) -> typing.List[dict]:
     paginator = client.get_paginator('describe_vpc_peering_connections')
@@ -208,13 +221,40 @@ class SubnetsPerVpcCheck(InstanceQuotaCheck):
     @property
     def current(self):
         if check_if_vpc_exists(self.get_client('ec2'), self.instance_id):
-            paginator = self.get_client('ec2').get_paginator('describe_subnets')
-            return len(list((chunk for page in paginator.paginate(Filters=[
-                {
-                    'Name': 'vpc-id',
-                    'Values': [self.instance_id]
-                }], PaginationConfig={'PageSize': 100}) for chunk in page['Subnets'])))
+            return len(list(filter(lambda nacl: self.instance_id == nacl['VpcId'], get_all_subnets(self.get_client('ec2')))))
         else:
+            raise InstanceWithIdentifierNotFound(self)
+
+
+class IpsPerSubnetCheck(InstanceQuotaCheck):
+    key = "vpc_ips_per_subnet"
+    description = "IPs per Subnet"
+    scope = QuotaScope.INSTANCE
+    service_code = 'vpc'
+    quota_code = 'D-00000001'
+    instance_id = 'Subnet ARN'
+    used_services = ['ec2']
+
+    @staticmethod
+    def get_all_identifiers(session: boto3.Session) -> typing.List[str]:
+        return [subnet['SubnetArn'] for subnet in get_all_subnets(get_client(session, 'ec2'))]
+
+    @property
+    def maximum(self):
+        try:
+            subnet = get_subnet_by_arn(self.get_client('ec2'), self.instance_id)
+            cidr = subnet['CidrBlock']
+            return pow(2, 32 - int(cidr.split('/')[1]))
+        except KeyError:
+            raise InstanceWithIdentifierNotFound(self)
+
+    @property
+    def current(self):
+        try:
+            subnet = get_subnet_by_arn(self.get_client('ec2'), self.instance_id)
+            available = int(subnet['AvailableIpAddressCount'])
+            return self.maximum - available
+        except KeyError:
             raise InstanceWithIdentifierNotFound(self)
 
 

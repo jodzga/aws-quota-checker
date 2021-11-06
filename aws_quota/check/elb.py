@@ -184,7 +184,7 @@ class TargetsPerAZPerNetworkLoadBalancerCountCheck(InstanceQuotaCheck):
 
     @staticmethod
     def get_all_identifiers(session: boto3.Session) -> typing.List[str]:
-        return [alb['LoadBalancerArn'] for alb in get_nlbs(get_client(session, 'elbv2'))]
+        return [nlb['LoadBalancerArn'] for nlb in get_nlbs(get_client(session, 'elbv2'))]
 
     @property
     def current(self):
