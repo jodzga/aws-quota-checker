@@ -1,5 +1,8 @@
-from .quota_check import QuotaCheck, QuotaScope
-
+from aws_quota.utils import get_client
+from .quota_check import QuotaCheck, InstanceQuotaCheck, QuotaScope
+from .vpc import get_all_vpcs
+import typing
+import boto3
 from aws_quota import threadsafecache
 
 
@@ -238,3 +241,44 @@ class VpnConnectionCountCheck(QuotaCheck):
     @property
     def current(self):
         return len(self.get_client(self.service_code).describe_vpn_connections()['VpnConnections'])
+
+
+class AttachmentsPerVpc(InstanceQuotaCheck):
+    key = "vpc_attachments_per_vpc"
+    description = "Attachments per VPC"
+    scope = QuotaScope.INSTANCE
+    service_code = 'ec2'
+    quota_code = 'L-6DA43717'
+    instance_id = 'VPC ID'
+    used_services = [service_code]
+
+    @staticmethod
+    def get_all_identifiers(session: boto3.Session) -> typing.List[str]:
+        return [vpc['VpcId'] for vpc in get_all_vpcs(get_client(session, 'ec2'))]
+
+    @property
+    def current(self) -> int:
+        paginator = self.get_client('ec2').get_paginator('describe_transit_gateway_vpc_attachments')
+        return len(list(filter(lambda attachment: self.instance_id == attachment['VpcId'],
+            list((chunk for page in paginator.paginate(PaginationConfig={'PageSize': 100}) for chunk in page['TransitGatewayVpcAttachments'])))))
+
+
+class RoutesPerClientVPNEndpoint(InstanceQuotaCheck):
+    key = "vpc_routes_per_client_vpn_endpoint"
+    description = "Routes per Client VPN endpoint"
+    scope = QuotaScope.INSTANCE
+    service_code = 'ec2'
+    quota_code = 'L-401D78F7'
+    instance_id = 'Client VPN Endpoint ID'
+    used_services = [service_code]
+
+    @staticmethod
+    def get_all_identifiers(session: boto3.Session) -> typing.List[str]:
+        paginator = get_client(session, 'ec2').get_paginator('describe_client_vpn_endpoints')
+        vpn_endpoints = list((chunk for page in paginator.paginate(PaginationConfig={'PageSize': 100}) for chunk in page['ClientVpnEndpoints']))
+        return [vpn_endpoint['ClientVpnEndpointId'] for vpn_endpoint in vpn_endpoints]
+
+    @property
+    def current(self) -> int:
+        paginator = self.get_client('ec2').get_paginator('describe_client_vpn_routes')
+        return len(list((chunk for page in paginator.paginate(ClientVpnEndpointId=self.instance_id, PaginationConfig={'PageSize': 100}) for chunk in page['Routes'])))
