@@ -27,14 +27,6 @@ def get_nlbs(client):
 
 
 @threadsafecache.run_once_cache
-def get_all_instances(client):
-    paginator = client.get_paginator('describe_instances')
-    reservations = list((chunk for page in paginator.paginate(PaginationConfig={'PageSize': 100}) for chunk in page['Reservations']))
-    instances = list((chunk for reservation in reservations for chunk in reservation['Instances']))
-    return {instance['InstanceId']: instance for instance in instances}
-
-
-@threadsafecache.run_once_cache
 def get_target_groups(client, lb_arn):
     paginator = client.get_paginator('describe_target_groups')
     return list((chunk for page in paginator.paginate(LoadBalancerArn=lb_arn, PaginationConfig={'PageSize': 100}) for chunk in page['TargetGroups']))
@@ -188,7 +180,7 @@ class TargetsPerAZPerNetworkLoadBalancerCountCheck(InstanceQuotaCheck):
     service_code = 'elasticloadbalancing'
     quota_code = 'L-B211E961'
     instance_id = 'Load Balancer ARN'
-    used_services = ['elbv2', 'ec2']
+    used_services = ['elbv2']
 
     @staticmethod
     def get_all_identifiers(session: boto3.Session) -> typing.List[str]:
@@ -197,16 +189,23 @@ class TargetsPerAZPerNetworkLoadBalancerCountCheck(InstanceQuotaCheck):
     @property
     def current(self):
         try:
-            instances = get_all_instances(self.get_client('ec2'))
             counts = {}
+            all = 0
             for target_group in get_target_groups(self.get_client('elbv2'), self.instance_id):
                 for tg_health in get_target_health(self.get_client('elbv2'), target_group['TargetGroupArn']):
                     tg = tg_health['Target']
-                    az = instances[tg['Id']]['Placement']['AvailabilityZone']
-                    if az not in counts:
-                        counts[az] = 0
-                    counts[az] += 1
-            return max(counts.values())
+                    if 'AvailabilityZone' not in tg or tg['AvailabilityZone'] == 'all':
+                        all += 1
+                    else:
+                        if tg['AvailabilityZone'] not in counts:
+                            counts[tg['AvailabilityZone']] = 0
+                        counts[tg['AvailabilityZone']] += 1
+            if not counts:
+                return all
+            else:
+                for az in counts:
+                    counts[az] += all
+                return max(counts.values)
         except self.get_client('elbv2').exceptions.LoadBalancerNotFoundException as e:
             raise InstanceWithIdentifierNotFound(self) from e
 
