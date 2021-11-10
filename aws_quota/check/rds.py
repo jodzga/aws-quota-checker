@@ -87,7 +87,7 @@ class RDSReadReplicasPerMasterCheck(InstanceQuotaCheck):
         return len(next(filter(lambda db: self.instance_id == db['DBInstanceIdentifier'], get_all_db_instances(self.get_client(self.service_code))))['ReadReplicaDBInstanceIdentifiers'])
 
 
-class RDSCheck(QuotaCheck):
+class RDSSecurityGroupsCheck(QuotaCheck):
     key = "rds_security_groups"
     description = "Security groups"
     service_code = "rds"
@@ -100,8 +100,8 @@ class RDSCheck(QuotaCheck):
         return len(get_all_db_security_groups(self.get_client(self.service_code)))
 
 
-class RDSCheck(QuotaCheck):
-    key = "rds_security_groups"
+class RDSSecurityGroupsVPCCheck(QuotaCheck):
+    key = "rds_security_groups_vpv"
     description = "Security groups (VPC)"
     service_code = "rds"
     scope = QuotaScope.REGION
@@ -113,13 +113,13 @@ class RDSCheck(QuotaCheck):
         return len(list(filter(lambda sg: 'VpcId' in sg and sg['VpcId'] is not None, get_all_db_security_groups(self.get_client(self.service_code)))))
 
 
-class RDSCheck(InstanceQuotaCheck):
-    key = "rds_security_groups"
-    description = "Security groups"
+class RDSAuthorizationsPerDBSecurityGroupCheck(InstanceQuotaCheck):
+    key = "rds_authorizations_per_db_security_group"
+    description = "Authorizations per DB security group"
     service_code = "rds"
     scope = QuotaScope.INSTANCE
     instance_id = 'DB Security Group Name'
-    quota_code = "L-732153D0"
+    quota_code = "L-AA8B1026"
     used_services = [service_code]
 
     @staticmethod
@@ -128,5 +128,5 @@ class RDSCheck(InstanceQuotaCheck):
 
     @property
     def current(self) -> int:
-        return len(next(filter(lambda db: self.instance_id == db['DBInstanceIdentifier'], get_all_db_instances(self.get_client(self.service_code))))['ReadReplicaDBInstanceIdentifiers'])
-
+        sg = next(filter(lambda db: self.instance_id == db['DBSecurityGroupName'], get_all_db_security_groups(self.get_client(self.service_code))))
+        return len(sg["EC2SecurityGroups"]) + len(sg["IPRanges"])
