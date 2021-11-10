@@ -101,7 +101,7 @@ class RDSSecurityGroupsCheck(QuotaCheck):
 
 
 class RDSSecurityGroupsVPCCheck(QuotaCheck):
-    key = "rds_security_groups_vpv"
+    key = "rds_security_groups_vpc"
     description = "Security groups (VPC)"
     service_code = "rds"
     scope = QuotaScope.REGION
