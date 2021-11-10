@@ -17,6 +17,7 @@ from .sns import *
 from .secretsmanager import *
 from .vpc import *
 from .rds import *
+from .kms import *
 from .quota_check import QuotaCheck
 
 
